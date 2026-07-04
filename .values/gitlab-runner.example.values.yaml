@@ -1,0 +1,44 @@
+# Copy to .values/gitlab-runner.values.yaml and adjust if needed.
+# Do not put runner authentication tokens in this file; pass them with
+# GITLAB_RUNNER_TOKEN or GITLAB_RUNNER_TOKEN_FILE when running deploy_runner.sh.
+
+gitlabUrl: https://gitlab.127.0.0.1.nip.io
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+
+concurrent: 4
+checkInterval: 3
+
+runners:
+  name: local-kubernetes-runner
+  tags: "k8s,local"
+  runUntagged: true
+  locked: null
+  cache:
+    secretName: gitlab-runner-garage-cache
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "gitlab"
+        image = "ubuntu:22.04"
+        poll_timeout = 180
+        cpu_request = "100m"
+        memory_request = "256Mi"
+        helper_cpu_request = "50m"
+        helper_memory_request = "128Mi"
+      [runners.cache]
+        # GitLab Runner names this cache backend "s3"; here it points to Garage,
+        # the in-cluster S3-compatible object store, not AWS S3.
+        Type = "s3"
+        Path = "runner"
+        Shared = true
+        [runners.cache.s3]
+          ServerAddress = "garage.gitlab.svc.cluster.local:3900"
+          BucketName = "runner-cache"
+          BucketLocation = "garage"
+          Insecure = true
+          AuthenticationType = "access-key"

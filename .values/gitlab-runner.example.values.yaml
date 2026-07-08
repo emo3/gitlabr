@@ -28,6 +28,7 @@ runners:
       [runners.kubernetes]
         namespace = "gitlab"
         image = "ubuntu:22.04"
+        privileged = true
         poll_timeout = 180
         cpu_request = "100m"
         memory_request = "256Mi"

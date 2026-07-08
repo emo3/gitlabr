@@ -2,7 +2,9 @@
 # Do not put runner authentication tokens in this file; pass them with
 # GITLAB_RUNNER_TOKEN or GITLAB_RUNNER_TOKEN_FILE when running deploy_runner.sh.
 
-gitlabUrl: https://gitlab.127.0.0.1.nip.io
+# Runner pods run inside Kubernetes, where 127.0.0.1 means the pod itself.
+# Use the in-cluster GitLab webservice URL for runner registration.
+gitlabUrl: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
 
 rbac:
   create: true
@@ -22,6 +24,7 @@ runners:
     secretName: gitlab-runner-garage-cache
   config: |
     [[runners]]
+      clone_url = "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
       [runners.kubernetes]
         namespace = "gitlab"
         image = "ubuntu:22.04"
@@ -37,7 +40,7 @@ runners:
         Path = "runner"
         Shared = true
         [runners.cache.s3]
-          ServerAddress = "garage.gitlab.svc.cluster.local:3900"
+          ServerAddress = "dev-garage.gitlab.svc.cluster.local:3900"
           BucketName = "runner-cache"
           BucketLocation = "garage"
           Insecure = true

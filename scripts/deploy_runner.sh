@@ -7,9 +7,18 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
 NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab-runner}"
+GITLAB_HOST="${GITLAB_HOST:-gitlab.127.0.0.1.nip.io}"
+GITLAB_REGISTRY_HOST="${GITLAB_REGISTRY_HOST:-registry.127.0.0.1.nip.io}"
+GITLAB_REGISTRY_PULL_SECRET="${GITLAB_REGISTRY_PULL_SECRET:-gitlab-registry-pull}"
+GITLAB_REGISTRY_USERNAME="${GITLAB_REGISTRY_USERNAME:-oauth2}"
+GITLAB_REGISTRY_EMAIL="${GITLAB_REGISTRY_EMAIL:-gitlab-runner-local@example.invalid}"
+CREATE_REGISTRY_PULL_SECRET="${CREATE_REGISTRY_PULL_SECRET:-true}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
+GLAB_CONFIG_FILE="${GLAB_CONFIG_FILE:-${XDG_CONFIG_HOME}/glab-cli/config.yml}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 RUNNER_CHART_REF="${RUNNER_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab-runner}"
@@ -52,6 +61,32 @@ function runner_token() {
   echo "ERROR: Set GITLAB_RUNNER_TOKEN or GITLAB_RUNNER_TOKEN_FILE." >&2
   echo "Create a runner in GitLab first, then use its runner authentication token." >&2
   exit 1
+}
+
+function registry_token() {
+  if [[ -n "${GITLAB_REGISTRY_TOKEN:-}" ]]; then
+    printf '%s' "${GITLAB_REGISTRY_TOKEN}"
+    return 0
+  fi
+
+  if [[ -n "${GITLAB_REGISTRY_TOKEN_FILE:-}" ]]; then
+    if [[ ! -f "${GITLAB_REGISTRY_TOKEN_FILE}" ]]; then
+      echo "ERROR: GITLAB_REGISTRY_TOKEN_FILE does not exist: ${GITLAB_REGISTRY_TOKEN_FILE}" >&2
+      exit 1
+    fi
+    tr -d '\n' < "${GITLAB_REGISTRY_TOKEN_FILE}"
+    return 0
+  fi
+
+  if [[ -f "${GLAB_CONFIG_FILE}" ]]; then
+    awk -v host="${GITLAB_HOST}" '
+      $1 == host ":" {inhost = 1; next}
+      inhost && $1 == "token:" {print $2; exit}
+    ' "${GLAB_CONFIG_FILE}"
+    return 0
+  fi
+
+  return 0
 }
 
 function validate_boolean() {
@@ -132,14 +167,41 @@ function create_cache_secret() {
     --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -
 }
 
+function create_registry_pull_secret() {
+  local token
+
+  if [[ "${CREATE_REGISTRY_PULL_SECRET}" != "true" ]]; then
+    return 0
+  fi
+
+  token="$(registry_token)"
+  if [[ -z "${token}" ]]; then
+    echo "ERROR: Could not find a registry token for ${GITLAB_HOST}."
+    echo "Set GITLAB_REGISTRY_TOKEN, GITLAB_REGISTRY_TOKEN_FILE, or run glab auth login with XDG_CONFIG_HOME=${XDG_CONFIG_HOME}."
+    exit 1
+  fi
+
+  kubectl --context "${KUBE_CONTEXT}" create namespace "${NAMESPACE}" \
+    --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -
+
+  kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" create secret docker-registry "${GITLAB_REGISTRY_PULL_SECRET}" \
+    --docker-server="${GITLAB_REGISTRY_HOST}" \
+    --docker-username="${GITLAB_REGISTRY_USERNAME}" \
+    --docker-password="${token}" \
+    --docker-email="${GITLAB_REGISTRY_EMAIL}" \
+    --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -
+}
+
 require_tool kubectl
 require_tool helm
 validate_boolean WAIT_FOR_RUNNER "${WAIT_FOR_RUNNER}"
+validate_boolean CREATE_REGISTRY_PULL_SECRET "${CREATE_REGISTRY_PULL_SECRET}"
 RUNNER_TOKEN_VALUE="$(runner_token)"
 ensure_context
 ensure_values_file
 ensure_helm_repo
 create_cache_secret
+create_registry_pull_secret
 
 HELM_ARGS=(
   upgrade --install "${RELEASE_NAME}" "${RUNNER_CHART_REF}"

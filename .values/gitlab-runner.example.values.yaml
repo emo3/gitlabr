@@ -27,7 +27,8 @@ runners:
       clone_url = "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
       [runners.kubernetes]
         namespace = "gitlab"
-        image = "gitlab-registry.gitlab.svc.cluster.local:5000/gitlab/gitlab-docker-runner:latest"
+        image = "registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest"
+        image_pull_secrets = ["gitlab-registry-pull"]
         privileged = true
         poll_timeout = 180
         cpu_request = "100m"

@@ -41,6 +41,9 @@ ignored file, then deploy:
 ```bash
 cd $HOME/code/gitlabr
 kubectl --context k3d-gitlab-dev -n gitlab get secret dev-garage-gitlab-object-storage
+cd $HOME/code/gitlabc
+bash scripts/configure_k3d_registry_pull.sh
+cd $HOME/code/gitlabr
 mkdir -p .secrets
 chmod 700 .secrets
 printf '%s' 'glrt-REPLACE_ME' > .secrets/gitlab-runner-token
@@ -64,6 +67,16 @@ Build pods also use this in-cluster service for Git fetches through the runner
 `gitlab.127.0.0.1.nip.io`, where `127.0.0.1` means the job pod itself.
 
 Use the HTTPS `gitlab.127.0.0.1.nip.io` URL for your browser.
+
+Runner job pods use the `gdr` image directly:
+
+```text
+registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest
+```
+
+`../gitlabc/scripts/configure_k3d_registry_pull.sh` makes k3d node image pulls
+use the local GitLab HTTPS registry path. Do not use Docker-in-Docker for the
+smoke test.
 
 ## Cache
 
@@ -101,6 +114,8 @@ bash scripts/dev_dependencies.sh setup
 | `RUNNER_VALUES_FILE` | `.values/gitlab-runner.values.yaml` |
 | `RUNNER_CHART_VERSION` | latest available from the Helm repo |
 | `GARAGE_RELEASE_NAME` | `dev-garage` |
+| `GITLAB_REGISTRY_PULL_SECRET` | `gitlab-registry-pull` |
+| `GITLAB_REGISTRY_HOST` | `registry.127.0.0.1.nip.io` |
 | `GITLAB_RUNNER_TOKEN` | required unless `GITLAB_RUNNER_TOKEN_FILE` is set |
 | `GITLAB_RUNNER_TOKEN_FILE` | unset |
 
@@ -109,13 +124,12 @@ bash scripts/dev_dependencies.sh setup
 Add this `.gitlab-ci.yml` to a project that can use the runner:
 
 ```yaml
-test-runner:
-  image: alpine:latest
+verify-tools:
+  image: registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest
   tags:
     - k8s
   script:
-    - echo "runner works"
-    - uname -a
+    - /usr/local/bin/verify-tools.sh
 ```
 
 Run the pipeline and confirm the job completes.

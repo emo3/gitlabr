@@ -76,19 +76,21 @@ authentication token and redeploy it. The example below assumes the restored
 runner ID is `1` and an administrator personal access token is already stored
 in the environment variable `TOKEN`:
 
-```bash
-curl -k --request POST \
-  --header "PRIVATE-TOKEN: ${TOKEN}" \
-  "https://gitlab.127.0.0.1.nip.io/api/v4/runners/1/reset_authentication_token"
-```
-
-Copy the `glrt-...` token from the response, then save and use it:
+`TOKEN` must contain the administrator personal access token (`glpat-...`). The
+following command resets runner `1`, extracts the new runner token (`glrt-...`),
+and saves it without printing either token:
 
 ```bash
 cd $HOME/code/gitlabr
 mkdir -p .secrets
 chmod 700 .secrets
-printf '%s' 'glrt-REPLACE_ME' > .secrets/gitlab-runner-token
+
+curl -ksS --fail-with-body --request POST \
+  --header "PRIVATE-TOKEN: ${TOKEN}" \
+  "https://gitlab.127.0.0.1.nip.io/api/v4/runners/1/reset_authentication_token" \
+  | jq -er '.token | select(startswith("glrt-"))' \
+  > .secrets/gitlab-runner-token
+
 chmod 600 .secrets/gitlab-runner-token
 
 cd $HOME/code/gitlabc

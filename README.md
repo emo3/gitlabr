@@ -68,6 +68,41 @@ Build pods also use this in-cluster service for Git fetches through the runner
 
 Use the HTTPS `gitlab.127.0.0.1.nip.io` URL for your browser.
 
+## After restoring GitLab (KIS)
+
+A GitLab backup restores the runner record, but it does not restore the Runner
+Helm release. If the existing runner is listed as offline, reset its
+authentication token and redeploy it. The example below assumes the restored
+runner ID is `1` and an administrator personal access token is already stored
+in the environment variable `TOKEN`:
+
+```bash
+curl -k --request POST \
+  --header "PRIVATE-TOKEN: ${TOKEN}" \
+  "https://gitlab.127.0.0.1.nip.io/api/v4/runners/1/reset_authentication_token"
+```
+
+Copy the `glrt-...` token from the response, then save and use it:
+
+```bash
+cd $HOME/code/gitlabr
+mkdir -p .secrets
+chmod 700 .secrets
+printf '%s' 'glrt-REPLACE_ME' > .secrets/gitlab-runner-token
+chmod 600 .secrets/gitlab-runner-token
+
+cd $HOME/code/gitlabc
+bash scripts/configure_k3d_registry_pull.sh
+
+cd $HOME/code/gitlabr
+GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token bash scripts/deploy_runner.sh
+bash scripts/check_runner.sh
+```
+
+Refresh `https://gitlab.127.0.0.1.nip.io/admin/runners/1` and confirm the
+existing runner is online. Replace `1` in both URLs if the restored runner has
+a different ID.
+
 Runner job pods use the `gdr` image directly:
 
 ```text

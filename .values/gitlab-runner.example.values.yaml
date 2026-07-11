@@ -35,6 +35,9 @@ runners:
         memory_request = "256Mi"
         helper_cpu_request = "50m"
         helper_memory_request = "128Mi"
+        [[runners.kubernetes.host_aliases]]
+          ip = "GITLAB_INGRESS_CLUSTER_IP"
+          hostnames = ["gitlab.127.0.0.1.nip.io"]
       [runners.cache]
         # GitLab Runner names this cache backend "s3"; here it points to Garage,
         # the in-cluster S3-compatible object store, not AWS S3.

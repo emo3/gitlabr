@@ -24,6 +24,7 @@ GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 RUNNER_CHART_REF="${RUNNER_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab-runner}"
 RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION:-}"
 RUNNER_VALUES_FILE="${RUNNER_VALUES_FILE:-${PROJECT_ROOT}/.values/gitlab-runner.values.yaml}"
+GITLAB_INGRESS_SERVICE="${GITLAB_INGRESS_SERVICE:-gitlab-nginx-ingress-controller}"
 RUNNER_CACHE_SECRET_NAME="${RUNNER_CACHE_SECRET_NAME:-gitlab-runner-garage-cache}"
 GARAGE_RELEASE_NAME="${GARAGE_RELEASE_NAME:-dev-garage}"
 GARAGE_OBJECT_STORAGE_SECRET="${GARAGE_OBJECT_STORAGE_SECRET:-${GARAGE_RELEASE_NAME}-gitlab-object-storage}"
@@ -141,6 +142,21 @@ function ensure_helm_repo() {
   helm repo update "${GITLAB_HELM_REPO_NAME}"
 }
 
+function render_runner_values() {
+  local ingress_ip
+  local rendered_values
+
+  ingress_ip="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get service "${GITLAB_INGRESS_SERVICE}" -o jsonpath='{.spec.clusterIP}')"
+  if [[ -z "${ingress_ip}" || "${ingress_ip}" == "None" ]]; then
+    echo "ERROR: Could not resolve ClusterIP for service '${GITLAB_INGRESS_SERVICE}'." >&2
+    exit 1
+  fi
+
+  rendered_values="$(mktemp)"
+  sed "s/GITLAB_INGRESS_CLUSTER_IP/${ingress_ip}/g" "${RUNNER_VALUES_FILE}" > "${rendered_values}"
+  printf '%s' "${rendered_values}"
+}
+
 function create_cache_secret() {
   local config
   local access_key
@@ -202,13 +218,15 @@ ensure_values_file
 ensure_helm_repo
 create_cache_secret
 create_registry_pull_secret
+RENDERED_RUNNER_VALUES_FILE="$(render_runner_values)"
+trap 'rm -f "${RENDERED_RUNNER_VALUES_FILE}"' EXIT
 
 HELM_ARGS=(
   upgrade --install "${RELEASE_NAME}" "${RUNNER_CHART_REF}"
   --kube-context "${KUBE_CONTEXT}"
   --namespace "${NAMESPACE}"
   --create-namespace
-  -f "${RUNNER_VALUES_FILE}"
+  -f "${RENDERED_RUNNER_VALUES_FILE}"
   --set-string "runnerToken=${RUNNER_TOKEN_VALUE}"
 )
 

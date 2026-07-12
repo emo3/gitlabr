@@ -38,6 +38,14 @@ runners:
         [[runners.kubernetes.host_aliases]]
           ip = "GITLAB_INGRESS_CLUSTER_IP"
           hostnames = ["gitlab.127.0.0.1.nip.io"]
+        # The registry challenges Docker to obtain a token from the HTTPS
+        # GitLab ingress.  Mount its mkcert certificate for the build and
+        # service containers, including docker:dind.
+        [[runners.kubernetes.volumes.secret]]
+          name = "gitlab-local-tls"
+          mount_path = "/etc/ssl/certs/gitlab-local.pem"
+          sub_path = "tls.crt"
+          read_only = true
       [runners.cache]
         # GitLab Runner names this cache backend "s3"; here it points to Garage,
         # the in-cluster S3-compatible object store, not AWS S3.

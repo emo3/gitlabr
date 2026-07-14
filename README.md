@@ -66,6 +66,11 @@ Build pods also use this in-cluster service for Git fetches through the runner
 `clone_url` setting. Otherwise jobs try to clone from
 `gitlab.127.0.0.1.nip.io`, where `127.0.0.1` means the job pod itself.
 
+During deployment, the runner also reads the GitLab webservice ingress hostname
+and maps it to the in-cluster ingress for build pods. This keeps registry JWT
+authentication working when GitLab advertises a LAN hostname such as
+`gitlab.192.168.86.50.nip.io`.
+
 Use the HTTPS `gitlab.127.0.0.1.nip.io` URL for your browser.
 
 ## After restoring GitLab (KIS)
@@ -139,6 +144,7 @@ bash scripts/dev_dependencies.sh setup
 | --- | --- |
 | Deploy runner | `GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token bash scripts/deploy_runner.sh` |
 | Check runner | `bash scripts/check_runner.sh` |
+| Recover an offline/stuck runner | `bash scripts/recover_runner.sh` |
 | Remove runner release | `bash scripts/reset_runner.sh` |
 
 ## Useful environment variables
@@ -183,3 +189,18 @@ kubectl --context k3d-gitlab-dev -n gitlab logs deploy/gitlab-runner
 The `deploy/gitlab-runner` log command assumes the default `RELEASE_NAME`.
 Also verify in GitLab that the runner is not paused and that the project has
 access to it.
+
+## Recover a stuck or offline runner
+
+Run the recovery command when jobs remain pending or the runner is offline:
+
+```bash
+cd $HOME/code/gitlabr
+bash scripts/recover_runner.sh
+```
+
+It checks the local runner and registry token files, reconciles the Helm
+release, then restarts the runner deployment and waits until it is ready. It is
+safe to run repeatedly. The restart briefly interrupts any currently running
+jobs; use it for jobs that are queued or stuck, not during a job you need to
+preserve.

@@ -24,6 +24,9 @@ runners:
     secretName: gitlab-runner-garage-cache
   config: |
     [[runners]]
+      # Keep enough GitLab long-poll requests open to promptly claim work for
+      # all available build slots. The default of 1 can delay queued jobs.
+      request_concurrency = 4
       clone_url = "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
       [runners.kubernetes]
         namespace = "gitlab"
@@ -37,7 +40,9 @@ runners:
         helper_memory_request = "128Mi"
         [[runners.kubernetes.host_aliases]]
           ip = "GITLAB_INGRESS_CLUSTER_IP"
-          hostnames = ["gitlab.127.0.0.1.nip.io"]
+          # deploy_runner.sh fills this with the GitLab webservice ingress
+          # hostname, including a configured LAN nip.io address.
+          hostnames = ["gitlab.127.0.0.1.nip.io", "GITLAB_EXTERNAL_HOSTNAME"]
         # The registry challenges Docker to obtain a token from the HTTPS
         # GitLab ingress.  Mount its mkcert certificate for the build and
         # service containers, including docker:dind.

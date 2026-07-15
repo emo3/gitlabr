@@ -28,15 +28,19 @@ Create an instance, group, or project runner in GitLab first:
 - Group runner: Group > Build > Runners > Create group runner.
 - Project runner: Project > Settings > CI/CD > Runners > Create project runner.
 
-For first local testing, prefer an instance runner or a group runner. Enable
-untagged jobs, and add tags:
+For first local testing, prefer a project runner. Disable untagged jobs and add
+tags:
 
 ```text
 k8s,local
 ```
 
-Copy the runner authentication token shown by GitLab, save it in a local
-ignored file, then deploy:
+Create a GitLab deploy token with only `read_registry` access to the project or
+group that owns `gitlab-docker-runner`, then save its generated username and
+token with the runner authentication token. Use an immutable job-image tag or
+digest; `latest` is intentionally rejected.
+
+Deploy:
 
 ```bash
 cd $HOME/code/gitlabr
@@ -48,13 +52,34 @@ mkdir -p .secrets
 chmod 700 .secrets
 printf '%s' 'glrt-REPLACE_ME' > .secrets/gitlab-runner-token
 chmod 600 .secrets/gitlab-runner-token
-GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token bash scripts/deploy_runner.sh
-bash scripts/check_runner.sh
+printf '%s' 'gitlab+deploy-token-REPLACE_ME' > .secrets/gitlab-registry-username
+printf '%s' 'DEPLOY_TOKEN_REPLACE_ME' > .secrets/gitlab-registry-token
+chmod 600 .secrets/gitlab-registry-username .secrets/gitlab-registry-token
+
+cat > .runner.env <<'EOF'
+RUNNER_JOB_IMAGE=registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
+GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token
+GITLAB_REGISTRY_TOKEN_FILE=.secrets/gitlab-registry-token
+GITLAB_REGISTRY_USERNAME_FILE=.secrets/gitlab-registry-username
+EOF
+
+bash scripts/deploy_runner.sh
+bash scripts/check_runner.sh -s
 ```
+
+Replace `COMMIT_SHA` with an image tag that was pushed by the matching commit
+of `../gitlab-docker-runner`, or use an image digest. For the public profile,
+use the registry hostname from its GitLab ingress, such as
+`registry.edmo3.dynv6.net/...:COMMIT_SHA`.
 
 The first deploy creates `.values/gitlab-runner.values.yaml` from
 `.values/gitlab-runner.example.values.yaml`. Edit the generated file when you
 want different tags, concurrency, default job image, or cache settings.
+
+An existing values file created before the profile-aware configuration is
+rejected with an update message. Copy the required image, host-alias, and TLS
+placeholders from `.values/gitlab-runner.example.values.yaml` while preserving
+your intentional tags and concurrency settings.
 
 The runner itself registers against the in-cluster GitLab service:
 
@@ -66,10 +91,10 @@ Build pods also use this in-cluster service for Git fetches through the runner
 `clone_url` setting. Otherwise jobs try to clone from
 `gitlab.127.0.0.1.nip.io`, where `127.0.0.1` means the job pod itself.
 
-During deployment, the runner also reads the GitLab webservice ingress hostname
-and maps it to the in-cluster ingress for build pods. This keeps registry JWT
-authentication working when GitLab advertises a LAN hostname such as
-`gitlab.192.168.86.50.nip.io`.
+During deployment, the runner reads the GitLab webservice and registry ingresses
+and their TLS secret. It maps both ingress hostnames to the in-cluster ingress
+for build pods. This supports the local mkcert, LAN, and public Let's Encrypt
+profiles without hard-coded certificate-secret or hostname values.
 
 Use the HTTPS `gitlab.127.0.0.1.nip.io` URL for your browser.
 
@@ -98,12 +123,16 @@ curl -ksS --fail-with-body --request POST \
 
 chmod 600 .secrets/gitlab-runner-token
 
+# Reuse the least-privilege registry deploy token created during initial setup.
+test -s .secrets/gitlab-registry-username
+test -s .secrets/gitlab-registry-token
+
 cd $HOME/code/gitlabc
 bash scripts/configure_k3d_registry_pull.sh
 
 cd $HOME/code/gitlabr
-GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token bash scripts/deploy_runner.sh
-bash scripts/check_runner.sh
+bash scripts/deploy_runner.sh
+bash scripts/check_runner.sh -s
 ```
 
 Refresh `https://gitlab.127.0.0.1.nip.io/admin/runners/1` and confirm the
@@ -113,7 +142,7 @@ a different ID.
 Runner job pods use the `gdr` image directly:
 
 ```text
-registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest
+registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
 ```
 
 `../gitlabc/scripts/configure_k3d_registry_pull.sh` makes k3d node image pulls
@@ -142,9 +171,9 @@ bash scripts/dev_dependencies.sh setup
 
 | Task | Command |
 | --- | --- |
-| Deploy runner | `GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token bash scripts/deploy_runner.sh` |
-| Check runner | `bash scripts/check_runner.sh` |
-| Recover an offline/stuck runner | `bash scripts/recover_runner.sh` |
+| Deploy runner | `bash scripts/deploy_runner.sh` |
+| Check runner | `bash scripts/check_runner.sh -s` |
+| Recover an offline/stuck runner | `bash scripts/recover_runner.sh` (`-f` forces a restart) |
 | Remove runner release | `bash scripts/reset_runner.sh` |
 
 ## Useful environment variables
@@ -155,12 +184,28 @@ bash scripts/dev_dependencies.sh setup
 | `RELEASE_NAME` | `gitlab-runner` |
 | `KUBE_CONTEXT` | `k3d-gitlab-dev` |
 | `RUNNER_VALUES_FILE` | `.values/gitlab-runner.values.yaml` |
-| `RUNNER_CHART_VERSION` | latest available from the Helm repo |
+| `RUNNER_ENV_FILE` | `.runner.env` |
+| `RUNNER_CHART_VERSION` | `0.90.1` |
+| `RUNNER_JOB_IMAGE` | required immutable job-image tag or digest |
 | `GARAGE_RELEASE_NAME` | `dev-garage` |
 | `GITLAB_REGISTRY_PULL_SECRET` | `gitlab-registry-pull` |
-| `GITLAB_REGISTRY_HOST` | `registry.127.0.0.1.nip.io` |
+| `GITLAB_REGISTRY_HOST` | discovered from the Registry ingress |
+| `GITLAB_TLS_SECRET` | discovered from the webservice ingress |
+| `GITLAB_REGISTRY_USERNAME_FILE` | `.secrets/gitlab-registry-username` |
+| `GITLAB_REGISTRY_TOKEN_FILE` | `.secrets/gitlab-registry-token` |
 | `GITLAB_RUNNER_TOKEN` | required unless `GITLAB_RUNNER_TOKEN_FILE` is set |
 | `GITLAB_RUNNER_TOKEN_FILE` | unset |
+
+Update the pinned Runner chart deliberately from the sibling GitLab profile:
+
+```bash
+cd $HOME/code/gitlabc
+bash scripts/update_gitlab_runner_chart_version.sh
+```
+
+Use `-a` to apply an allowed update. The updater changes the tracked Runner
+chart pin in `../gitlabr/scripts/deploy_runner.sh` and upgrades the installed
+release with its current Helm values.
 
 ## Smoke test
 
@@ -168,7 +213,7 @@ Add this `.gitlab-ci.yml` to a project that can use the runner:
 
 ```yaml
 verify-tools:
-  image: registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest
+  image: registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
   tags:
     - k8s
   script:
@@ -181,7 +226,7 @@ If the runner does not pick up jobs:
 
 ```bash
 cd $HOME/code/gitlabr
-bash scripts/check_runner.sh
+bash scripts/check_runner.sh -s
 kubectl --context k3d-gitlab-dev -n gitlab get deployment
 kubectl --context k3d-gitlab-dev -n gitlab logs deploy/gitlab-runner
 ```
@@ -199,8 +244,8 @@ cd $HOME/code/gitlabr
 bash scripts/recover_runner.sh
 ```
 
-It checks the local runner and registry token files, reconciles the Helm
-release, then restarts the runner deployment and waits until it is ready. It is
-safe to run repeatedly. The restart briefly interrupts any currently running
-jobs; use it for jobs that are queued or stuck, not during a job you need to
-preserve.
+It first checks whether the Runner is healthy. When healthy, it exits without a
+change; use `-f` only when you intentionally want to reconcile and restart it.
+When recovery is needed, it checks the local runner and registry token files,
+reconciles the Helm release, then restarts the runner deployment and waits
+until it is ready. A forced restart briefly interrupts currently running jobs.

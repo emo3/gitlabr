@@ -9,23 +9,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
+RUNNER_ENV_FILE="${RUNNER_ENV_FILE:-${PROJECT_ROOT}/.runner.env}"
+if [[ -f "${RUNNER_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${RUNNER_ENV_FILE}"
+fi
+
 NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab-runner}"
-GITLAB_HOST="${GITLAB_HOST:-gitlab.127.0.0.1.nip.io}"
-GITLAB_REGISTRY_HOST="${GITLAB_REGISTRY_HOST:-registry.127.0.0.1.nip.io}"
+GITLAB_RELEASE_NAME="${GITLAB_RELEASE_NAME:-gitlab}"
+GITLAB_HOST="${GITLAB_HOST:-}"
+GITLAB_REGISTRY_HOST="${GITLAB_REGISTRY_HOST:-}"
+GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-}"
 GITLAB_REGISTRY_PULL_SECRET="${GITLAB_REGISTRY_PULL_SECRET:-gitlab-registry-pull}"
-GITLAB_REGISTRY_USERNAME="${GITLAB_REGISTRY_USERNAME:-oauth2}"
+GITLAB_REGISTRY_USERNAME="${GITLAB_REGISTRY_USERNAME:-}"
+GITLAB_REGISTRY_USERNAME_FILE="${GITLAB_REGISTRY_USERNAME_FILE:-${PROJECT_ROOT}/.secrets/gitlab-registry-username}"
 GITLAB_REGISTRY_EMAIL="${GITLAB_REGISTRY_EMAIL:-gitlab-runner-local@example.invalid}"
 CREATE_REGISTRY_PULL_SECRET="${CREATE_REGISTRY_PULL_SECRET:-true}"
+ALLOW_GLAB_REGISTRY_TOKEN="${ALLOW_GLAB_REGISTRY_TOKEN:-false}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
 GLAB_CONFIG_FILE="${GLAB_CONFIG_FILE:-${XDG_CONFIG_HOME}/glab-cli/config.yml}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 RUNNER_CHART_REF="${RUNNER_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab-runner}"
-RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION:-}"
+RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION:-0.90.1}"
+RUNNER_JOB_IMAGE="${RUNNER_JOB_IMAGE:-}"
 RUNNER_VALUES_FILE="${RUNNER_VALUES_FILE:-${PROJECT_ROOT}/.values/gitlab-runner.values.yaml}"
 GITLAB_INGRESS_SERVICE="${GITLAB_INGRESS_SERVICE:-gitlab-nginx-ingress-controller}"
 GITLAB_WEBSERVICE_INGRESS="${GITLAB_WEBSERVICE_INGRESS:-gitlab-webservice-default}"
+GITLAB_REGISTRY_INGRESS="${GITLAB_REGISTRY_INGRESS:-${GITLAB_RELEASE_NAME}-registry}"
 RUNNER_CACHE_SECRET_NAME="${RUNNER_CACHE_SECRET_NAME:-gitlab-runner-garage-cache}"
 GARAGE_RELEASE_NAME="${GARAGE_RELEASE_NAME:-dev-garage}"
 GARAGE_OBJECT_STORAGE_SECRET="${GARAGE_OBJECT_STORAGE_SECRET:-${GARAGE_RELEASE_NAME}-gitlab-object-storage}"
@@ -43,6 +55,25 @@ function require_tool() {
     echo "ERROR: ${tool} is required but not installed."
     exit 1
   fi
+}
+
+function usage() {
+  cat <<'USAGE'
+Usage: bash scripts/deploy_runner.sh [-h]
+
+Reconciles the standalone GitLab Runner Helm release. It is safe to rerun.
+
+Set the required runner inputs in .runner.env or the environment:
+  RUNNER_JOB_IMAGE                 Immutable job-image tag or digest.
+  GITLAB_RUNNER_TOKEN_FILE         Runner authentication token file.
+  GITLAB_REGISTRY_TOKEN_FILE       read_registry deploy-token file.
+  GITLAB_REGISTRY_USERNAME_FILE    Deploy-token username file.
+
+Environment:
+  RUNNER_ENV_FILE                  Settings file (default: .runner.env).
+  RUNNER_CHART_VERSION             Pinned Runner chart version (default: 0.90.1).
+  KUBE_CONTEXT                     Kubernetes context (default: k3d-gitlab-dev).
+USAGE
 }
 
 function runner_token() {
@@ -80,7 +111,8 @@ function registry_token() {
     return 0
   fi
 
-  if [[ -f "${GLAB_CONFIG_FILE}" ]]; then
+  if [[ "${ALLOW_GLAB_REGISTRY_TOKEN}" == "true" && -f "${GLAB_CONFIG_FILE}" ]]; then
+    echo "WARNING: Using the local glab token as a registry credential. Prefer a read_registry deploy token." >&2
     awk -v host="${GITLAB_HOST}" '
       $1 == host ":" {inhost = 1; next}
       inhost && $1 == "token:" {print $2; exit}
@@ -88,7 +120,23 @@ function registry_token() {
     return 0
   fi
 
-  return 0
+  echo "ERROR: Set GITLAB_REGISTRY_TOKEN_FILE to a read_registry deploy-token credential." >&2
+  return 1
+}
+
+function registry_username() {
+  if [[ -n "${GITLAB_REGISTRY_USERNAME}" ]]; then
+    printf '%s' "${GITLAB_REGISTRY_USERNAME}"
+    return 0
+  fi
+
+  if [[ -f "${GITLAB_REGISTRY_USERNAME_FILE}" ]]; then
+    tr -d '\n' < "${GITLAB_REGISTRY_USERNAME_FILE}"
+    return 0
+  fi
+
+  echo "ERROR: Set GITLAB_REGISTRY_USERNAME or GITLAB_REGISTRY_USERNAME_FILE for the read_registry deploy token." >&2
+  return 1
 }
 
 function validate_boolean() {
@@ -119,8 +167,31 @@ function ensure_context() {
     echo "Run ../gitlabc/ansible-install-k8s-tools-gitlab-deps.yml first, or set KUBE_CONTEXT."
     exit 1
   fi
+}
 
-  kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
+function resolve_gitlab_endpoints() {
+  local resolved_host
+  local resolved_registry_host
+  local resolved_tls_secret
+
+  resolved_host="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get ingress "${GITLAB_WEBSERVICE_INGRESS}" -o jsonpath='{.spec.rules[0].host}')"
+  resolved_tls_secret="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get ingress "${GITLAB_WEBSERVICE_INGRESS}" -o jsonpath='{.spec.tls[0].secretName}')"
+  resolved_registry_host="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get ingress "${GITLAB_REGISTRY_INGRESS}" -o jsonpath='{.spec.rules[0].host}')"
+
+  GITLAB_HOST="${GITLAB_HOST:-${resolved_host}}"
+  GITLAB_REGISTRY_HOST="${GITLAB_REGISTRY_HOST:-${resolved_registry_host}}"
+  GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-${resolved_tls_secret}}"
+
+  if [[ -z "${GITLAB_HOST}" || -z "${GITLAB_REGISTRY_HOST}" || -z "${GITLAB_TLS_SECRET}" ]]; then
+    echo "ERROR: Could not resolve GitLab webservice host, registry host, or TLS secret from ingress resources." >&2
+    echo "Set GITLAB_HOST, GITLAB_REGISTRY_HOST, and GITLAB_TLS_SECRET explicitly if your ingress names differ." >&2
+    exit 1
+  fi
+
+  if [[ -z "${RUNNER_JOB_IMAGE}" || "${RUNNER_JOB_IMAGE}" == *":latest" ]]; then
+    echo "ERROR: Set RUNNER_JOB_IMAGE to an immutable GitLab Runner job-image tag or digest; ':latest' is not allowed." >&2
+    exit 1
+  fi
 }
 
 function ensure_values_file() {
@@ -131,6 +202,25 @@ function ensure_values_file() {
   mkdir -p "$(dirname "${RUNNER_VALUES_FILE}")"
   cp "${PROJECT_ROOT}/.values/gitlab-runner.example.values.yaml" "${RUNNER_VALUES_FILE}"
   echo "Created ${RUNNER_VALUES_FILE} from the example values."
+}
+
+function validate_runner_values_file() {
+  local required_marker
+
+  for required_marker in \
+    RUNNER_JOB_IMAGE \
+    GITLAB_EXTERNAL_HOSTNAME \
+    GITLAB_EXTERNAL_REGISTRY_HOST \
+    GITLAB_TLS_SECRET
+  do
+    if ! grep -Fq "${required_marker}" "${RUNNER_VALUES_FILE}"; then
+      echo "ERROR: ${RUNNER_VALUES_FILE} predates the profile-aware runner configuration." >&2
+      echo "Update its runner image, host aliases, and TLS-secret placeholders from:" >&2
+      echo "  ${PROJECT_ROOT}/.values/gitlab-runner.example.values.yaml" >&2
+      echo "Preserve any intentional local settings such as tags or concurrency." >&2
+      exit 1
+    fi
+  done
 }
 
 function ensure_helm_repo() {
@@ -154,16 +244,14 @@ function render_runner_values() {
     exit 1
   fi
 
-  external_gitlab_host="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get ingress "${GITLAB_WEBSERVICE_INGRESS}" -o jsonpath='{.spec.rules[0].host}')"
-  if [[ -z "${external_gitlab_host}" ]]; then
-    echo "ERROR: Could not resolve the GitLab hostname from ingress '${GITLAB_WEBSERVICE_INGRESS}'." >&2
-    exit 1
-  fi
-
   rendered_values="$(mktemp)"
   sed \
     -e "s/GITLAB_INGRESS_CLUSTER_IP/${ingress_ip}/g" \
-    -e "s/GITLAB_EXTERNAL_HOSTNAME/${external_gitlab_host}/g" \
+    -e "s/GITLAB_EXTERNAL_HOSTNAME/${GITLAB_HOST}/g" \
+    -e "s/GITLAB_EXTERNAL_REGISTRY_HOST/${GITLAB_REGISTRY_HOST}/g" \
+    -e "s/GITLAB_REGISTRY_HOST/${GITLAB_REGISTRY_HOST}/g" \
+    -e "s/GITLAB_TLS_SECRET/${GITLAB_TLS_SECRET}/g" \
+    -e "s|RUNNER_JOB_IMAGE|${RUNNER_JOB_IMAGE}|g" \
     "${RUNNER_VALUES_FILE}" > "${rendered_values}"
   printf '%s' "${rendered_values}"
 }
@@ -174,9 +262,9 @@ function create_cache_secret() {
   local secret_key
 
   if ! kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${GARAGE_OBJECT_STORAGE_SECRET}" > /dev/null 2>&1; then
-    echo "WARNING: Secret '${GARAGE_OBJECT_STORAGE_SECRET}' was not found. Skipping runner cache secret."
-    echo "         Run ../gitlabc/scripts/dev_dependencies.sh setup first if you want Garage-backed cache."
-    return 0
+    echo "ERROR: Secret '${GARAGE_OBJECT_STORAGE_SECRET}' was not found."
+    echo "Run ../gitlabc/scripts/dev_dependencies.sh setup first, or remove the cache configuration from ${RUNNER_VALUES_FILE}."
+    exit 1
   fi
 
   config="$(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${GARAGE_OBJECT_STORAGE_SECRET}" -o jsonpath='{.data.config}' | base64_decode)"
@@ -196,15 +284,22 @@ function create_cache_secret() {
 
 function create_registry_pull_secret() {
   local token
+  local username
 
   if [[ "${CREATE_REGISTRY_PULL_SECRET}" != "true" ]]; then
     return 0
   fi
 
   token="$(registry_token)"
+  username="$(registry_username)"
   if [[ -z "${token}" ]]; then
     echo "ERROR: Could not find a registry token for ${GITLAB_HOST}."
-    echo "Set GITLAB_REGISTRY_TOKEN, GITLAB_REGISTRY_TOKEN_FILE, or run glab auth login with XDG_CONFIG_HOME=${XDG_CONFIG_HOME}."
+    echo "Set GITLAB_REGISTRY_TOKEN or GITLAB_REGISTRY_TOKEN_FILE to a read_registry deploy token."
+    exit 1
+  fi
+
+  if [[ -z "${username}" ]]; then
+    echo "ERROR: Could not find a registry username for ${GITLAB_REGISTRY_HOST}."
     exit 1
   fi
 
@@ -213,19 +308,43 @@ function create_registry_pull_secret() {
 
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" create secret docker-registry "${GITLAB_REGISTRY_PULL_SECRET}" \
     --docker-server="${GITLAB_REGISTRY_HOST}" \
-    --docker-username="${GITLAB_REGISTRY_USERNAME}" \
+    --docker-username="${username}" \
     --docker-password="${token}" \
     --docker-email="${GITLAB_REGISTRY_EMAIL}" \
     --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -
 }
 
+while getopts ":h" opt; do
+  case "${opt}" in
+    h)
+      usage
+      exit 0
+      ;;
+    \?)
+      echo "ERROR: Unknown argument: -${OPTARG}" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: Unexpected positional argument: $1" >&2
+  usage
+  exit 1
+fi
+
 require_tool kubectl
 require_tool helm
 validate_boolean WAIT_FOR_RUNNER "${WAIT_FOR_RUNNER}"
 validate_boolean CREATE_REGISTRY_PULL_SECRET "${CREATE_REGISTRY_PULL_SECRET}"
+validate_boolean ALLOW_GLAB_REGISTRY_TOKEN "${ALLOW_GLAB_REGISTRY_TOKEN}"
 RUNNER_TOKEN_VALUE="$(runner_token)"
 ensure_context
+resolve_gitlab_endpoints
 ensure_values_file
+validate_runner_values_file
 ensure_helm_repo
 create_cache_secret
 create_registry_pull_secret

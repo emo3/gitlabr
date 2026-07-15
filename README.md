@@ -19,7 +19,7 @@ bash scripts/check_status.sh
 Open GitLab:
 
 ```text
-https://gitlab.127.0.0.1.nip.io/users/sign_in
+https://gitlab.192.168.86.50.nip.io/users/sign_in
 ```
 
 Create an instance, group, or project runner in GitLab first:
@@ -57,7 +57,7 @@ printf '%s' 'DEPLOY_TOKEN_REPLACE_ME' > .secrets/gitlab-registry-token
 chmod 600 .secrets/gitlab-registry-username .secrets/gitlab-registry-token
 
 cat > .runner.env <<'EOF'
-RUNNER_JOB_IMAGE=registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
+RUNNER_JOB_IMAGE=registry.192.168.86.50.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
 GITLAB_RUNNER_TOKEN_FILE=.secrets/gitlab-runner-token
 GITLAB_REGISTRY_TOKEN_FILE=.secrets/gitlab-registry-token
 GITLAB_REGISTRY_USERNAME_FILE=.secrets/gitlab-registry-username
@@ -89,14 +89,15 @@ http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
 
 Build pods also use this in-cluster service for Git fetches through the runner
 `clone_url` setting. Otherwise jobs try to clone from
-`gitlab.127.0.0.1.nip.io`, where `127.0.0.1` means the job pod itself.
+the external GitLab ingress hostname, where a loopback address would point at
+the job pod itself.
 
 During deployment, the runner reads the GitLab webservice and registry ingresses
 and their TLS secret. It maps both ingress hostnames to the in-cluster ingress
 for build pods. This supports the local mkcert, LAN, and public Let's Encrypt
 profiles without hard-coded certificate-secret or hostname values.
 
-Use the HTTPS `gitlab.127.0.0.1.nip.io` URL for your browser.
+Use the HTTPS `gitlab.192.168.86.50.nip.io` URL for your browser.
 
 ## After restoring GitLab (KIS)
 
@@ -117,7 +118,7 @@ chmod 700 .secrets
 
 curl -ksS --fail-with-body --request POST \
   --header "PRIVATE-TOKEN: ${TOKEN}" \
-  "https://gitlab.127.0.0.1.nip.io/api/v4/runners/1/reset_authentication_token" \
+  "https://gitlab.192.168.86.50.nip.io/api/v4/runners/1/reset_authentication_token" \
   | jq -er '.token | select(startswith("glrt-"))' \
   > .secrets/gitlab-runner-token
 
@@ -135,14 +136,14 @@ bash scripts/deploy_runner.sh
 bash scripts/check_runner.sh -s
 ```
 
-Refresh `https://gitlab.127.0.0.1.nip.io/admin/runners/1` and confirm the
+Refresh `https://gitlab.192.168.86.50.nip.io/admin/runners/1` and confirm the
 existing runner is online. Replace `1` in both URLs if the restored runner has
 a different ID.
 
 Runner job pods use the `gdr` image directly:
 
 ```text
-registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
+registry.192.168.86.50.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
 ```
 
 `../gitlabc/scripts/configure_k3d_registry_pull.sh` makes k3d node image pulls
@@ -213,7 +214,7 @@ Add this `.gitlab-ci.yml` to a project that can use the runner:
 
 ```yaml
 verify-tools:
-  image: registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
+  image: registry.192.168.86.50.nip.io/gitlab/gitlab-docker-runner:COMMIT_SHA
   tags:
     - k8s
   script:

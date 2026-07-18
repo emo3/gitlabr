@@ -18,8 +18,8 @@ checkInterval: 3
 runners:
   name: local-kubernetes-runner
   tags: "k8s,local"
-  runUntagged: true
-  locked: null
+  runUntagged: false
+  locked: true
   cache:
     secretName: gitlab-runner-garage-cache
   config: |
@@ -30,9 +30,9 @@ runners:
       clone_url = "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181"
       [runners.kubernetes]
         namespace = "gitlab"
-        image = "registry.127.0.0.1.nip.io/gitlab/gitlab-docker-runner:latest"
+        image = "RUNNER_JOB_IMAGE"
         image_pull_secrets = ["gitlab-registry-pull"]
-        privileged = true
+        privileged = false
         poll_timeout = 180
         cpu_request = "100m"
         memory_request = "256Mi"
@@ -41,13 +41,13 @@ runners:
         [[runners.kubernetes.host_aliases]]
           ip = "GITLAB_INGRESS_CLUSTER_IP"
           # deploy_runner.sh fills this with the GitLab webservice ingress
-          # hostname, including a configured LAN nip.io address.
-          hostnames = ["gitlab.127.0.0.1.nip.io", "GITLAB_EXTERNAL_HOSTNAME"]
+          # and registry ingress hostnames for the selected GitLab TLS profile.
+          hostnames = ["GITLAB_EXTERNAL_HOSTNAME", "GITLAB_EXTERNAL_REGISTRY_HOST"]
         # The registry challenges Docker to obtain a token from the HTTPS
         # GitLab ingress.  Mount its mkcert certificate for the build and
         # service containers, including docker:dind.
         [[runners.kubernetes.volumes.secret]]
-          name = "gitlab-local-tls"
+          name = "GITLAB_TLS_SECRET"
           mount_path = "/etc/ssl/certs/gitlab-local.pem"
           sub_path = "tls.crt"
           read_only = true

@@ -1,3 +1,4 @@
 .values/*.yaml
 !.values/gitlab-runner.example.values.yaml
 .secrets/
+.runner.env

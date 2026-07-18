@@ -197,16 +197,18 @@ bash scripts/dev_dependencies.sh setup
 | `GITLAB_RUNNER_TOKEN` | required unless `GITLAB_RUNNER_TOKEN_FILE` is set |
 | `GITLAB_RUNNER_TOKEN_FILE` | unset |
 
-Update the pinned Runner chart deliberately from the sibling GitLab profile:
+Check the pinned Runner chart from the sibling GitLab profile:
 
 ```bash
 cd $HOME/code/gitlabc
-bash scripts/update_gitlab_runner_chart_version.sh
+bash scripts/check_latest_stable.sh -r
 ```
 
-Use `-a` to apply an allowed update. The updater changes the tracked Runner
-chart pin in `../gitlabr/scripts/deploy_runner.sh` and upgrades the installed
-release with its current Helm values.
+To update the pin and reconcile the installed Runner in one idempotent command:
+
+```bash
+bash scripts/check_latest_stable.sh -a -r
+```
 
 ## Smoke test
 

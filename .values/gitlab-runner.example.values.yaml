@@ -31,6 +31,8 @@ runners:
       [runners.kubernetes]
         namespace = "gitlab"
         image = "RUNNER_JOB_IMAGE"
+        # Always resolve the promoted rolling tag for each new job pod.
+        pull_policy = ["always"]
         image_pull_secrets = ["gitlab-registry-pull"]
         privileged = false
         poll_timeout = 180

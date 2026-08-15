@@ -81,7 +81,7 @@ Usage: bash scripts/deploy_runner.sh [-h]
 Reconciles the standalone GitLab Runner Helm release. It is safe to rerun.
 
 Set the required runner inputs in .runner.env or the environment:
-  RUNNER_JOB_IMAGE                 Immutable job-image tag or digest.
+  RUNNER_JOB_IMAGE                 Job-image tag or digest; `latest` follows the verified promoted image.
   GITLAB_RUNNER_TOKEN_FILE         Runner authentication token file.
   GITLAB_REGISTRY_TOKEN_FILE       read_registry deploy-token file.
   GITLAB_REGISTRY_USERNAME_FILE    Deploy-token username file.
@@ -157,6 +157,19 @@ function registry_username() {
   return 1
 }
 
+function reject_placeholder_credential() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    *REPLACE_ME*|*CHANGE_ME*|*YOUR_*|*placeholder*|*PLACEHOLDER*)
+      echo "ERROR: ${name} contains an example placeholder, not a usable GitLab credential." >&2
+      echo "Replace it with the generated read_registry deploy-token value, then rerun this script." >&2
+      exit 1
+      ;;
+  esac
+}
+
 function validate_boolean() {
   local name="$1"
   local value="$2"
@@ -206,8 +219,8 @@ function resolve_gitlab_endpoints() {
     exit 1
   fi
 
-  if [[ -z "${RUNNER_JOB_IMAGE}" || "${RUNNER_JOB_IMAGE}" == *":latest" ]]; then
-    echo "ERROR: Set RUNNER_JOB_IMAGE to an immutable GitLab Runner job-image tag or digest; ':latest' is not allowed." >&2
+  if [[ -z "${RUNNER_JOB_IMAGE}" ]]; then
+    echo "ERROR: Set RUNNER_JOB_IMAGE to a GitLab Runner job-image tag or digest." >&2
     exit 1
   fi
 }
@@ -320,6 +333,9 @@ function create_registry_pull_secret() {
     echo "ERROR: Could not find a registry username for ${GITLAB_REGISTRY_HOST}."
     exit 1
   fi
+
+  reject_placeholder_credential "GITLAB_REGISTRY_TOKEN" "${token}"
+  reject_placeholder_credential "GITLAB_REGISTRY_USERNAME" "${username}"
 
   kubectl --context "${KUBE_CONTEXT}" create namespace "${NAMESPACE}" \
     --dry-run=client -o yaml | kubectl --context "${KUBE_CONTEXT}" apply -f -

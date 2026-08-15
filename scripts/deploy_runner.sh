@@ -9,10 +9,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
+# Version pins are tracked independently from machine-local runner credentials.
+RUNNER_CHART_VERSION_OVERRIDE="${RUNNER_CHART_VERSION-}"
+RUNNER_CHART_VERSION_WAS_SET=false
+if [[ -v RUNNER_CHART_VERSION ]]; then
+  RUNNER_CHART_VERSION_WAS_SET=true
+fi
+RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE:-${PROJECT_ROOT}/.runner-versions.env}"
+if [[ ! -f "${RUNNER_VERSIONS_FILE}" ]]; then
+  echo "ERROR: Runner versions file not found at ${RUNNER_VERSIONS_FILE}."
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "${RUNNER_VERSIONS_FILE}"
+
 RUNNER_ENV_FILE="${RUNNER_ENV_FILE:-${PROJECT_ROOT}/.runner.env}"
 if [[ -f "${RUNNER_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${RUNNER_ENV_FILE}"
+fi
+if [[ "${RUNNER_CHART_VERSION_WAS_SET}" == "true" ]]; then
+  RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION_OVERRIDE}"
 fi
 
 NAMESPACE="${NAMESPACE:-gitlab}"
@@ -32,7 +49,7 @@ GLAB_CONFIG_FILE="${GLAB_CONFIG_FILE:-${XDG_CONFIG_HOME}/glab-cli/config.yml}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 RUNNER_CHART_REF="${RUNNER_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab-runner}"
-RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION:-0.91.0}"
+RUNNER_CHART_VERSION="${RUNNER_CHART_VERSION:?ERROR: Set RUNNER_CHART_VERSION in ${RUNNER_VERSIONS_FILE} or the environment.}"
 RUNNER_JOB_IMAGE="${RUNNER_JOB_IMAGE:-}"
 RUNNER_VALUES_FILE="${RUNNER_VALUES_FILE:-${PROJECT_ROOT}/.values/gitlab-runner.values.yaml}"
 GITLAB_INGRESS_SERVICE="${GITLAB_INGRESS_SERVICE:-gitlab-nginx-ingress-controller}"
@@ -71,7 +88,8 @@ Set the required runner inputs in .runner.env or the environment:
 
 Environment:
   RUNNER_ENV_FILE                  Settings file (default: .runner.env).
-  RUNNER_CHART_VERSION             Pinned Runner chart version (default: 0.90.1).
+  RUNNER_VERSIONS_FILE             Version settings file (default: .runner-versions.env).
+  RUNNER_CHART_VERSION             Pinned Runner chart version (from RUNNER_VERSIONS_FILE).
   KUBE_CONTEXT                     Kubernetes context (default: k3d-gitlab-dev).
 USAGE
 }

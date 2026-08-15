@@ -186,7 +186,8 @@ bash scripts/dev_dependencies.sh setup
 | `KUBE_CONTEXT` | `k3d-gitlab-dev` |
 | `RUNNER_VALUES_FILE` | `.values/gitlab-runner.values.yaml` |
 | `RUNNER_ENV_FILE` | `.runner.env` |
-| `RUNNER_CHART_VERSION` | `0.90.1` |
+| `RUNNER_VERSIONS_FILE` | `.runner-versions.env` |
+| `RUNNER_CHART_VERSION` | loaded from `.runner-versions.env` |
 | `RUNNER_JOB_IMAGE` | required immutable job-image tag or digest |
 | `GARAGE_RELEASE_NAME` | `dev-garage` |
 | `GITLAB_REGISTRY_PULL_SECRET` | `gitlab-registry-pull` |

@@ -2,3 +2,5 @@
 !.values/gitlab-runner.example.values.yaml
 .secrets/
 .runner.env
+
+.runner-versions.local.env

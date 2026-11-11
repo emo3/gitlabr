@@ -259,3 +259,8 @@ change; use `-f` only when you intentionally want to reconcile and restart it.
 When recovery is needed, it checks the local runner and registry token files,
 reconciles the Helm release, then restarts the runner deployment and waits
 until it is ready. A forced restart briefly interrupts currently running jobs.
+
+Runner chart versions default to the tracked `.runner-versions.env`. The sibling
+`gitlabc/scripts/check_latest_stable.sh -a` creates and updates the ignored
+`.runner-versions.local.env`; deployments use it when present. Preserve that
+local file if you need to reproduce the same pin on another machine.

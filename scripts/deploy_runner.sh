@@ -15,7 +15,10 @@ RUNNER_CHART_VERSION_WAS_SET=false
 if [[ -v RUNNER_CHART_VERSION ]]; then
   RUNNER_CHART_VERSION_WAS_SET=true
 fi
-RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE:-${PROJECT_ROOT}/.runner-versions.env}"
+if [[ -z "${RUNNER_VERSIONS_FILE:-}" ]]; then
+  RUNNER_VERSIONS_FILE="${PROJECT_ROOT}/.runner-versions.env"
+  [[ ! -f "${PROJECT_ROOT}/.runner-versions.local.env" ]] || RUNNER_VERSIONS_FILE="${PROJECT_ROOT}/.runner-versions.local.env"
+fi
 if [[ ! -f "${RUNNER_VERSIONS_FILE}" ]]; then
   echo "ERROR: Runner versions file not found at ${RUNNER_VERSIONS_FILE}."
   exit 1
